@@ -119,10 +119,16 @@ def restore(cycle_id: str) -> list:
     manifest = json.loads(mf.read_text(encoding="utf-8"))
     results = []
     for item in manifest.get("items", []):
-        src, dst = Path(item["to"]), Path(item["from"])
+        src = Path(item["to"])
+        if not src.is_file():
+            # 冷区整体搬迁后的回退解析: 清单同目录同名(NNN__name 扁平命名保证唯一)
+            alt = mf.parent / src.name
+            if alt.is_file():
+                src = alt
         if not src.is_file():
             results.append({"from": item["from"], "ok": False, "note": "冷区文件缺失"})
             continue
+        dst = Path(item["from"])
         try:
             if dst.exists():
                 alt = dst.with_name(dst.name + ".restored-" + cycle_id)
