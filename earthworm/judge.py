@@ -50,83 +50,101 @@ class Decision:
 def run(candidates: list, kernel, cfg: Config, treasure_hashes: set,
         corpus_texts: list) -> list:
     decisions: list = []
-    budget = cfg.llm_judge_limit
     prec = precedents_text()
     learned = load_learned()
 
-    for c in sorted(candidates, key=lambda x: (-x.rule_weight, x.path)):
-        # 台账去重: 同一内容已消化过 → 不重复出卡(消融: 零知识损失)。
-        # 冷区不设永久哈希跳过: restore 送回的文件应重新受审。
-        if c.sha256 and c.sha256 in treasure_hashes:
-            decisions.append(Decision(c, "ignore", "sha256 已在宝藏库(已消化)"))
-            continue
+    # 预算分区: 垃圾确认道 ≤70%, 发现道(宝藏判定) ≥30% —— 知识产出不被饿死
+    budget_total = cfg.llm_judge_limit
+    rule_items = [c for c in candidates if c.rule_garbage]
+    find_items = [c for c in candidates if not c.rule_garbage]
 
-        if c.is_text and c.text_score < 0:
-            corpus = corpus_texts if len(corpus_texts) < 50 else corpus_texts[:50]
-            c.text_score = density.text_score(c.text_head)
+    def _pass(items: list, budget: int) -> tuple:
+        out: list = []
+        for c in sorted(items, key=lambda x: (-x.rule_weight, x.path)):
+            b = _judge_one(c, out, budget, cfg, treasure_hashes, prec, learned, kernel)
+            budget = b
+            if budget <= 0 and kernel is not None:
+                break
+        return out, budget
 
-        escalate = c.is_text and c.text_score >= cfg.escalate_score
-        has_text = c.is_text and bool(c.text_head.strip())
-        learned_fast = (pattern_key(c.category, c.signals) in learned
-                        and not has_text)  # 习得快车道只对非文本生效
-        fast = ((c.category in FASTLANE_CATS or learned_fast) and c.rule_garbage
-                and not escalate and not has_text)  # 有字的必须过内核
+    dec_rule, budget_left = _pass(rule_items, max(1, budget_total * 7 // 10))
+    dec_find, _ = _pass(find_items, max(budget_total - (budget_total - budget_left),
+                                        budget_total * 3 // 10))
+    return dec_rule + dec_find
 
-        if fast:
-            if c.size > cfg.max_move_mb * 1024 * 1024:
-                decisions.append(Decision(c, "observe",
-                                          f"快车道命中但超单文件上限 {cfg.max_move_mb}MB"))
-                continue
-            decisions.append(Decision(c, "cold",
-                                      f"快车道: {c.category} (纯规则强信号, 非文本)"))
-            continue
 
-        # ---- 语义道: 需要内核 ----
-        if kernel is None:
-            decisions.append(Decision(c, "observe", "内核不可达/未启用 → 全局禁食"))
-            continue
-        if budget <= 0:
-            decisions.append(Decision(c, "observe", "本轮内核预算耗尽 → 观察"))
-            continue
+def _judge_one(c: Candidate, decisions: list, budget: int, cfg: Config,
+               treasure_hashes: set, prec: str, learned: set, kernel) -> int:
+    if kernel is None:
+        decisions.append(Decision(c, "observe", "内核不可达/未启用 → 全局禁食"))
+        return budget
+    # 台账去重: 同一内容已消化过 → 不重复出卡(消融: 零知识损失)。
+    # 冷区不设永久哈希跳过: restore 送回的文件应重新受审。
+    if c.sha256 and c.sha256 in treasure_hashes:
+        decisions.append(Decision(c, "ignore", "sha256 已在宝藏库(已消化)"))
+        return budget
 
-        meta = {"path": c.path, "ext": c.ext, "size": c.size,
-                "age_days": c.age_days, "signals": c.signals}
-        if prec:
-            meta["precedents"] = prec
-        excerpt = c.text_head[:3000] if c.is_text else ""
-        try:
-            k = kernel.judge(meta, excerpt)
-        except KernelDown as e:
-            decisions.append(Decision(c, "observe", f"内核故障禁食: {e}"))
-            continue
-        budget -= 1
+    if c.is_text and c.text_score < 0:
+        c.text_score = density.text_score(c.text_head)
 
-        if c.rule_garbage and k["verdict"] == "garbage" \
-                and k["confidence"] >= cfg.kernel_conf_floor:
-            act = "cold"
-            reason = f"双钥一致: 规则({c.category}) × 内核垃圾(conf={k['confidence']:.2f})"
-        elif c.rule_garbage:
-            act = "observe"
-            reason = f"双钥分歧: 规则垃圾但内核={k['verdict']}(conf={k['confidence']:.2f}) → 观察"
-        elif k["verdict"] == "treasure":
-            act = "digest"
-            # 宝藏卡与去重台账都依赖 sha256; 查重没算过的这里补算(≤64MB)
-            if not c.sha256 and c.size <= HASH_CAP_MB * 1024 * 1024:
-                try:
-                    c.sha256 = _sha256_of(Path(c.path))
-                except OSError:
-                    pass
-            reason = f"内核判宝藏(conf={k['confidence']:.2f}) → 消化出卡, 原文件保留"
-        elif k["verdict"] == "garbage":
-            act = "observe"
-            reason = f"内核单票垃圾(conf={k['confidence']:.2f}), 无规则票 → 观察(单票不冷置)"
-        else:
-            act = "observe"
-            reason = f"内核 unknown(conf={k['confidence']:.2f}) → 观察"
+    escalate = c.is_text and c.text_score >= cfg.escalate_score
+    has_text = c.is_text and bool(c.text_head.strip())
+    learned_fast = (pattern_key(c.category, c.signals) in learned
+                    and not has_text)  # 习得快车道只对非文本生效
+    fast = ((c.category in FASTLANE_CATS or learned_fast) and c.rule_garbage
+            and not escalate and not has_text)  # 有字的必须过内核
 
-        if act == "cold" and c.size > cfg.max_move_mb * 1024 * 1024:
-            act = "observe"
-            reason += f"; 超单文件上限 {cfg.max_move_mb}MB"
-        decisions.append(Decision(c, act, reason, kernel=k))
+    if fast:
+        if c.size > cfg.max_move_mb * 1024 * 1024:
+            decisions.append(Decision(c, "observe",
+                                      f"快车道命中但超单文件上限 {cfg.max_move_mb}MB"))
+            return budget
+        decisions.append(Decision(c, "cold",
+                                  f"快车道: {c.category} (纯规则强信号, 非文本)"))
+        return budget
 
-    return decisions
+    # ---- 语义道: 需要内核 ----
+    if budget <= 0:
+        decisions.append(Decision(c, "observe", "本轮内核预算耗尽 → 观察"))
+        return budget
+
+    meta = {"path": c.path, "ext": c.ext, "size": c.size,
+            "age_days": c.age_days, "signals": c.signals}
+    if prec:
+        meta["precedents"] = prec
+    excerpt = c.text_head[:3000] if c.is_text else ""
+    try:
+        k = kernel.judge(meta, excerpt)
+    except KernelDown as e:
+        decisions.append(Decision(c, "observe", f"内核故障禁食: {e}"))
+        return budget
+    budget -= 1
+
+    if c.rule_garbage and k["verdict"] == "garbage" \
+            and k["confidence"] >= cfg.kernel_conf_floor:
+        act = "cold"
+        reason = f"双钥一致: 规则({c.category}) × 内核垃圾(conf={k['confidence']:.2f})"
+    elif c.rule_garbage:
+        act = "observe"
+        reason = f"双钥分歧: 规则垃圾但内核={k['verdict']}(conf={k['confidence']:.2f}) → 观察"
+    elif k["verdict"] == "treasure":
+        act = "digest"
+        # 宝藏卡与去重台账都依赖 sha256; 查重没算过的这里补算(≤64MB)
+        if not c.sha256 and c.size <= HASH_CAP_MB * 1024 * 1024:
+            try:
+                c.sha256 = _sha256_of(Path(c.path))
+            except OSError:
+                pass
+        reason = f"内核判宝藏(conf={k['confidence']:.2f}) → 消化出卡, 原文件保留"
+    elif k["verdict"] == "garbage":
+        act = "observe"
+        reason = f"内核单票垃圾(conf={k['confidence']:.2f}), 无规则票 → 观察(单票不冷置)"
+    else:
+        act = "observe"
+        reason = f"内核 unknown(conf={k['confidence']:.2f}) → 观察"
+
+    if act == "cold" and c.size > cfg.max_move_mb * 1024 * 1024:
+        act = "observe"
+        reason += f"; 超单文件上限 {cfg.max_move_mb}MB"
+    decisions.append(Decision(c, act, reason, kernel=k))
+    return budget

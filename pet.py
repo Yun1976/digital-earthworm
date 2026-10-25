@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 import queue
 import subprocess
 import sys
@@ -87,10 +88,31 @@ class Pet:
         self._menu.add_separator()
         self._menu.add_command(label="退出", command=self.root.destroy)
         self._drag = None
+        self._hb_ts = ""
         self.cv.bind("<ButtonPress-1>", self._drag_start, add="+")
         self.cv.bind("<B1-Motion>", self._drag_move, add="+")
         self.root.after(400, self._animate)
+        self.root.after(3000, self._poll_hb)
         self.root.after(2000, self._check_schedule)
+
+    def _poll_hb(self) -> None:
+        """心跳监听: 任何人触发的代谢都让蚯蚓醒来表态。"""
+        try:
+            hb = json.loads((REPO / "state" / "heartbeat.json").read_text(encoding="utf-8"))
+            ts = hb.get("ts", "")
+            if ts and ts != self._hb_ts:
+                self._hb_ts = ts
+                if hb.get("phase") == "dig":
+                    self.state = "dig"
+                    self._say("有人喂我了, 出洞进食中…")
+                elif hb.get("phase") == "done":
+                    self.state = "done"
+                    self._say(f"吃饱回洞✅ 吃{hb.get('cold', '?')}·消化{hb.get('digest', '?')}"
+                              f"·观察{hb.get('observe', '?')}\n(点击看报告)")
+                    self.root.after(60000, self._back_to_sleep)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        self.root.after(3000, self._poll_hb)
 
     # ---------- 外观 ----------
     def _draw(self) -> None:

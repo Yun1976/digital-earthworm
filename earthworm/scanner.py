@@ -13,6 +13,7 @@ import os
 import re
 import stat
 import time
+import zipfile
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -31,7 +32,7 @@ EXT_CATEGORY = {
 CATEGORY_WEIGHT = {
     "tmp": 5, "pyc": 4, "dmp": 5, "partial": 5, "swap": 4, "etl": 4,
     "bak": 3, "cache": 3, "zero": 5, "lock": 5, "dupe": 5, "copy": 4,
-    "log": 3, "junk_dir": 2,
+    "log": 3, "junk_dir": 2, "version": 3,
 }
 FASTLANE_CATS = {"zero", "lock", "tmp", "pyc", "dmp", "partial", "dupe"}
 JUNK_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
@@ -39,6 +40,11 @@ JUNK_DIR_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
 COPY_RE = re.compile(r"[（(]\d+[）)](\.\w+)?$")
 COPY_HINTS = (" - 副本", " - copy", "(copy)", "_backup", ".backup")
 LOG_DATE_RE = re.compile(r"\d{4}[-_]?\d{2}[-_]?\d{2}")
+# 版本链后缀: v1/v12、终版、日历版、定稿、final、old、bak…
+VERSION_SUFFIX_RE = re.compile(
+    r"(?:[-_ \.]?(?:v\d+|终版|最终版|定稿|定版|final|日历版|修订版|新版|老版|旧版|旧|备份|bak\d*|old\d*|draft\d*|草稿\d*))+",
+    re.IGNORECASE)
+OFFICE_TEXT_EXTS = {".xlsx", ".xlsm", ".docx"}
 HASH_CAP_MB = 64          # 查重单文件大小上限
 HASH_BUDGET_MB = 512      # 单轮查重总字节预算
 
@@ -71,6 +77,7 @@ class ScanResult:
     total_seen: int = 0
     skipped: int = 0
     dupes: int = 0
+    version_chain: int = 0
     node_modules: list = field(default_factory=list)
     report_only: list = field(default_factory=list)   # _MEI* 等运行中程序目录: 只报不动
     truncated: bool = False
@@ -113,8 +120,27 @@ def _signals_for(fp: Path, size: int, rel_parts: tuple, age_days: float,
     return cat_final[0], signals, sum(weights)
 
 
+def _office_text(fp: Path, max_bytes: int) -> str:
+    """xlsx/docx = zip+xml; 抽共享字符串/正文文本喂内核(读得到内容的office)。"""
+    try:
+        with zipfile.ZipFile(fp) as z:
+            names = z.namelist()
+            chunks = []
+            for cand in ("xl/sharedStrings.xml", "word/document.xml"):
+                if cand in names:
+                    raw = z.read(cand)[:max_bytes]
+                    chunks.append(re.sub(r"<[^>]+>", " ", raw.decode("utf-8", "ignore")))
+            text = re.sub(r"\s+", " ", " ".join(chunks)).strip()
+            return text[:max_bytes]
+    except (OSError, zipfile.BadZipFile, KeyError):
+        return ""
+
+
 def _read_head(fp: Path, max_bytes: int) -> tuple:
-    """返回 (is_text, head)。NUL 字节或乱码率过高视为二进制。"""
+    """返回 (is_text, head)。office 走文本抽取; NUL/乱码率高视为二进制。"""
+    if fp.suffix.lower() in OFFICE_TEXT_EXTS:
+        t = _office_text(fp, max_bytes)
+        return (bool(t), t)
     try:
         raw = fp.read_bytes()[:max_bytes]
     except OSError:
@@ -178,6 +204,47 @@ def mark_dupes(universe: list) -> int:
     return dupes
 
 
+def mark_version_chains(universe: list) -> int:
+    """版本链: 同目录同名干 + 版本后缀(v2/终版/日历版/final…) ≥3 个成链。
+
+    保留件优先: 终版/final > 最高版本号 > 最新 mtime; 其余标记
+    superseded_by(类别 version, 重量 3, 走内核确认道)。只读。
+    """
+    groups: dict = {}
+    for c in universe:
+        stem = Path(c.path).stem
+        m = VERSION_SUFFIX_RE.search(stem)
+        if not m or m.end() < len(stem):
+            continue  # 后缀必须贴尾
+        base = VERSION_SUFFIX_RE.sub("", stem).strip("-_ .")
+        if not base:
+            continue
+        key = (str(Path(c.path).parent).lower(), base.lower(), Path(c.path).suffix.lower())
+        groups.setdefault(key, []).append(c)
+    marked = 0
+    for grp in groups.values():
+        if len(grp) < 3:
+            continue  # ≥3 才成链, 避免误伤"原件+一个重命名"
+
+        def rank(c: Candidate) -> tuple:
+            stem = Path(c.path).stem
+            is_final = 1 if re.search(r"终版|最终|final", stem, re.I) else 0
+            vn = re.search(r"v(\d+)", stem, re.I)
+            return (is_final, int(vn.group(1)) if vn else -1, c.mtime)
+
+        keeper = max(grp, key=rank)
+        for c in grp:
+            if c is keeper or c.category == "dupe":
+                continue
+            c.signals.append(f"superseded_by:{keeper.path}")
+            if c.category in ("", "other"):
+                c.category = "version"
+            c.rule_weight += 3
+            c.rule_garbage = True
+            marked += 1
+    return marked
+
+
 def scan(roots: list, cfg: Config) -> ScanResult:
     now = time.time()
     res = ScanResult(candidates=[])
@@ -221,6 +288,8 @@ def scan(roots: list, cfg: Config) -> ScanResult:
                     res.skipped += 1
                     continue
                 if is_protected(str(fp), roots):
+                    res.total_files += 1
+                    res.total_bytes += stt.st_size
                     continue
                 res.total_files += 1
                 res.total_bytes += stt.st_size
@@ -239,6 +308,7 @@ def scan(roots: list, cfg: Config) -> ScanResult:
         if stop:
             break
     res.dupes = mark_dupes(universe)
+    res.version_chain = mark_version_chains(universe)
     # 候选集: 有规则信号的 + 被查重标记的 + 小散件(交内核发现道)。
     # 陈化线只挡普通候选; 副本冗余与新旧无关, 豁免。
     for c in universe:

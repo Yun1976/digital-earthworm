@@ -105,6 +105,14 @@ def is_protected(p: str | Path, roots=()) -> bool:
         return True
     aw_l = _norm(AI_WORK)
     if sl == aw_l or sl.startswith(aw_l + os.sep):
+        for r in roots:
+            try:
+                rl = _norm(Path(r).resolve())
+            except OSError:
+                continue
+            if (rl.startswith(aw_l + os.sep) or rl == aw_l) and \
+                    (sl == rl or sl.startswith(rl + os.sep)):
+                return False  # 显式以 AI WORK 内部为根 = 创始人点名授权(沙盒同规则)
         try:
             rel = Path(str(p)).relative_to(AI_WORK)
         except ValueError:

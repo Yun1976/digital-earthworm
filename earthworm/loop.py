@@ -49,10 +49,20 @@ def _append_ledger(entries: list) -> None:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
 
 
+def _heartbeat(cycle_id: str, phase: str, **extra) -> None:
+    """心跳文件: 桌宠壳靠它感知一切进食(不管是谁触发的)。"""
+    hb = {"ts": dt.datetime.now().isoformat(timespec="seconds"),
+          "cycle": cycle_id, "phase": phase, **extra}
+    state_dir().mkdir(parents=True, exist_ok=True)
+    (state_dir() / "heartbeat.json").write_text(
+        json.dumps(hb, ensure_ascii=False), encoding="utf-8")
+
+
 def cycle(cfg: Config) -> dict:
     t0 = time.time()
     now = dt.datetime.now()
     cycle_id = now.strftime("%Y%m%d-%H%M%S")
+    _heartbeat(cycle_id, "dig")
 
     roots, rejected = filter_roots(cfg.roots)
     print(f"[1/5] 出洞扫描: {roots}" + (f"(硬保护拒绝: {rejected})" if rejected else ""))
@@ -141,4 +151,7 @@ def cycle(cfg: Config) -> dict:
     if lr["patterns"]:
         print(f"进化: 模式 {lr['patterns']} 个, 习得快车道 {len(lr['learned'])} 个"
               + (f", 新习得 {lr['newly_learned']}" if lr["newly_learned"] else ""))
+    _heartbeat(cycle_id, "done", cold=summary["actions"]["cold"],
+               digest=summary["actions"]["digest"],
+               observe=summary["actions"]["observe"], report=str(rpath))
     return summary
