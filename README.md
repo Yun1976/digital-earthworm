@@ -61,11 +61,13 @@ python -m earthworm status
 ## 目录
 
 ```
-earthworm/        内核包(config/providers/scanner/judge/digest/quarantine/report/loop)
+earthworm/        内核包(config/providers/scanner/judge/digest/quarantine/evolution/report/loop)
 treasure/         宝藏库(知识卡 + INDEX.md, append-only)
-state/            ledger.jsonl 台账 · cycles/ 快照 · quarantine/ 冷区 · treasure_index.json
+state/            ledger.jsonl 台账 · cycles/ 快照 · heartbeat.json 心跳 · daily-roots.txt
+D:\earthworm-cold 冷区(仓库外): <循环ID>/ 被吃文件 + MANIFEST.json
 reports/          每轮代谢报告(md)
 sandbox/          沙盒夹具 + 断言 harness (python sandbox/run_test.py)
+pet.py            桌宠壳(独立运行, 心跳感知一切进食)
 ```
 
 ## 晋升进化（越吃越聪明）
