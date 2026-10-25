@@ -15,11 +15,11 @@ import os
 import shutil
 from pathlib import Path
 
-from .config import REPO
+from .config import COLD_ROOT
 
 
 def cold_dir(cycle_id: str) -> Path:
-    return REPO / "state" / "quarantine" / cycle_id
+    return COLD_ROOT / cycle_id
 
 
 def _sha256_of(p: Path) -> str:

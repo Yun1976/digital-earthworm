@@ -61,10 +61,9 @@ def run(candidates: list, kernel, cfg: Config, treasure_hashes: set,
     def _pass(items: list, budget: int) -> tuple:
         out: list = []
         for c in sorted(items, key=lambda x: (-x.rule_weight, x.path)):
-            b = _judge_one(c, out, budget, cfg, treasure_hashes, prec, learned, kernel)
-            budget = b
-            if budget <= 0 and kernel is not None:
-                break
+            # 预算耗尽不 break: _judge_one 会给剩余项补"预算耗尽→观察",
+            # 保证每个候选都有判定(快车道不受预算限制)。
+            budget = _judge_one(c, out, budget, cfg, treasure_hashes, prec, learned, kernel)
         return out, budget
 
     dec_rule, budget_left = _pass(rule_items, max(1, budget_total * 7 // 10))

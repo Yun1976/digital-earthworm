@@ -15,6 +15,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 AI_WORK = Path(r"D:\AI WORK")
 D_ROOT = Path("D:\\")
+# 冷区在仓库外: 开源仓库不携带用户检疫数据, 安全扫描器也不应扫检疫证据
+COLD_ROOT = Path(r"D:\earthworm-cold")
 
 # 系统级文件按名硬保护(锁定/系统自建, 吃了无意义且危险)
 PROTECTED_FILE_NAMES = {"pagefile.sys", "hiberfil.sys", "swapfile.sys",
