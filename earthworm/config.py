@@ -16,17 +16,44 @@ REPO = Path(__file__).resolve().parent.parent
 AI_WORK = Path(r"D:\AI WORK")
 D_ROOT = Path("D:\\")
 
-# D:\ 整体默认保护(D盘是主战场, 生产/资产目录密集), 仅白名单开放扫描。
-# 2026-10-25 创始人令"真实环境从D盘开跑"前实测顶层49项后划定。
-D_SCANNABLE = {"tmp", "tmp_lo_temp", "tmp_render", "es-tmp",
-               "baidunetdiskdownload", "gs", "gsv"}
-
 # 系统级文件按名硬保护(锁定/系统自建, 吃了无意义且危险)
 PROTECTED_FILE_NAMES = {"pagefile.sys", "hiberfil.sys", "swapfile.sys",
                         "dumpstack.log.tmp"}
 
 # D:\AI WORK 整体软保护, 仅下列"天然垃圾向"子目录开放扫描
 AI_WORK_SCANNABLE = {"logs", "tmp", "tmp-ref", "ai-caches", "zcode-caches"}
+
+# D:\ 默认可扫(创始人 2026-10-25 令: D盘可大量测试, 损失可复原),
+# 但隐私/不可再生内容/在用软件/封存保全/备份/基础设施 仍硬保护:
+D_PROTECT_EXTRA = [
+    r"D:\个人资料", r"D:\公务", r"D:\交付",           # 隐私与公文
+    r"D:\ApowerRECData",                              # 屏幕录像=不可再生
+    r"D:\WeChatDataAnalysis",
+    r"D:\Feishu", r"D:\KimiCode", r"D:\Kingsoft",     # 在用软件(吃了=弄坏程序)
+    r"D:\Steam", r"D:\steam game", r"D:\cursor",
+    r"D:\SketchUp", r"D:\WSL", r"D:\BaiduNetdisk", r"D:\DaBaiCai",
+    r"D:\AI youxi",                                   # 创始人既有保护清单
+    r"D:\elbow-expert-backup-clean-20261009",         # B1 归档
+    r"D:\pac-root",                                   # 活动代理基础设施
+    r"D:\Program Files",
+    r"D:\lp_run", r"D:\espeakngdata",                 # livetalking 封存保全依赖
+    r"D:\work",
+    r"D:\$RECYCLE.BIN", r"D:\System Volume Information",  # 系统区
+]
+
+# agent 宿主目录: 白名单机制 —— 根级文件(凭证/配置)永不可扫,
+# 仅列名垃圾向子目录开放。E盘标注工作站维持整体硬保护(创始人 2026-10-25 令:
+# 反复测试无问题前不吃)。
+AGENT_HOME_ALLOWLIST = {
+    r"C:\Users\user\.zcode": {"tmp_edge_pdf", "tmp_edge_pdf2", "tmp_edge_proxy",
+                              "export-log-stage"},
+    r"C:\Users\user\.codex": {"archived_sessions", "attachments", "log", "tmp"},
+    r"C:\Users\user\.cursor": {"agents", "ai-tracking", "projects", "plans"},
+    r"C:\Users\user\AppData\Roaming\Cursor": {
+        "Cache", "Code Cache", "GPUCache", "DawnGraphiteCache",
+        "DawnWebGPUCache", "CachedData", "CachedExtensionVSIXs",
+    },
+}
 
 # 硬保护: 永不扫描、永不移动, 显式 --roots 也拒绝(防手滑)
 HARD_PROTECT = [
@@ -35,7 +62,6 @@ HARD_PROTECT = [
     r"C:\Program Files (x86)",
     r"C:\ProgramData",
     r"C:\Users\user\.ssh",
-    r"C:\Users\user\.zcode",
     r"C:\Users\user\.ollama",
     r"E:\elbow-expert",   # 标注工作站生产数据(P2 再开受控子路径)
     r"D:\livetalking",
@@ -86,15 +112,26 @@ def is_protected(p: str | Path, roots=()) -> bool:
         return not (rel.parts and rel.parts[0].lower() in AI_WORK_SCANNABLE)
     d_l = _norm(D_ROOT)
     if sl == d_l or sl.startswith(d_l + os.sep):
-        try:
-            rel = Path(str(p)).relative_to(D_ROOT)
-        except ValueError:
-            return True
-        if not rel.parts:
-            return False  # D:\ 本身(逐个子项再判)
-        if len(rel.parts) == 1:
-            return False  # 盘根散文件(如 tmp-eco-master.md)交规则/内核判
-        return rel.parts[0].lower() not in D_SCANNABLE
+        for h in D_PROTECT_EXTRA:
+            hl = _norm(h)
+            if sl == hl or sl.startswith(hl + os.sep):
+                return True
+        return False
+    for home, allow in AGENT_HOME_ALLOWLIST.items():
+        hl = _norm(home)
+        if sl == hl or sl.startswith(hl + os.sep):
+            try:
+                rel = Path(str(p)).relative_to(home)
+            except ValueError:
+                return True
+            allowed = {a.lower() for a in allow}
+            if not rel.parts:
+                return True                    # 宿主根本体
+            if len(rel.parts) == 1:
+                if Path(str(p)).is_dir():
+                    return rel.parts[0].lower() not in allowed  # 白名单子目录才开放
+                return True                    # 根级文件(凭证/配置)永不可扫
+            return rel.parts[0].lower() not in allowed
     return False
 
 

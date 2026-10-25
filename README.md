@@ -33,6 +33,10 @@ python -m earthworm status
 
 1. **保护名单 > 模型分数**（L-ENTROPY-004/005/006）：硬保护路径连扫描根都不许当；
    `D:\AI WORK` 默认整体软保护，仅 `logs / tmp / tmp-ref / ai-caches / zcode-caches` 开放。
+   D 盘默认可扫（适合大量测试的盘），但隐私/录像/在用软件/备份/系统区硬保护
+   （`D_PROTECT_EXTRA`）；**AI agent 宿主目录走白名单**（`AGENT_HOME_ALLOWLIST`）：
+   `.zcode / .codex / .cursor / Cursor缓存` 的根级文件（auth.json、config.toml 等凭证配置）
+   永不可扫，仅开放垃圾向子目录；E 盘标注工作站整体硬保护。
 2. **双钥门**：规则引擎判垃圾 **且** 内核判垃圾（conf ≥ 0.6）才进冷区；任何一方分歧 → 观察区，不动文件。内核单票不冷置。
 3. **升级道**（防"把有用的当垃圾消化"的主防线）：名字像垃圾但文本密度高（text_score ≥ 0.6）的文件，快车道失效，强制内核按内容裁决；内容看不准一律 unknown → 观察。
 4. **内核不可达 → 全局禁食**：智力密度不够就只观察不进食。
@@ -63,6 +67,25 @@ state/            ledger.jsonl 台账 · cycles/ 快照 · quarantine/ 冷区 ·
 reports/          每轮代谢报告(md)
 sandbox/          沙盒夹具 + 断言 harness (python sandbox/run_test.py)
 ```
+
+## 晋升进化（越吃越聪明）
+
+```bash
+python -m earthworm learn     # 台账 → 模式统计 → 判例注入内核 + 习得快车道(≥95%确认)
+python -m earthworm promote   # 同主题宝藏卡 ≥4 张 → 内核压实成聚合卡(晋升链)
+```
+
+每轮循环结束自动 learn；进化动作全部落 `state/evolution.jsonl` 审计。
+
+## 桌宠独立运行
+
+```bash
+pythonw pet.py            # 启动(无黑窗): 睡觉/出洞/报告三态, 右键菜单, 每日20:30自动进食
+pythonw pet.py --install  # 开机自启(HKCU Run)
+pythonw pet.py --uninstall
+```
+
+常驻进食范围见 `state/daily-roots.txt`（默认 C 盘 TEMP + D 盘垃圾区 + AI WORK 垃圾目录）。
 
 ## 与产品方案的阶段对齐
 
