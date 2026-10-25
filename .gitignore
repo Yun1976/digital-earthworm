@@ -1,0 +1,12 @@
+# 运行时产物(台账/冷区/宝藏库/报告) — 不进版本库
+state/
+treasure/
+reports/
+sandbox/fixture/
+__pycache__/
+*.pyc
+
+# 本机环境
+*.log
+.venv/
+.mimosa/
