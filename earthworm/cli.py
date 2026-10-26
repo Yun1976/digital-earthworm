@@ -73,7 +73,8 @@ def cmd_status(_a) -> int:
     cards = sorted(digest.treasure_dir().rglob("*.md")) if digest.treasure_dir().is_dir() else []
     cards = [c for c in cards if c.name != "INDEX.md"]
     print(f"宝藏库: {len(cards)} 张知识卡  ({digest.treasure_dir()})")
-    q = REPO / "state" / "quarantine"
+    from .config import COLD_ROOT
+    q = COLD_ROOT
     qc = sorted(p.name for p in q.iterdir() if p.is_dir()) if q.is_dir() else []
     print(f"冷区循环: {len(qc)} 个  ({q})")
     return 0
