@@ -70,6 +70,16 @@ sandbox/          沙盒夹具 + 断言 harness (python sandbox/run_test.py)
 pet.py            桌宠壳(独立运行, 心跳感知一切进食)
 ```
 
+## 日常工作制(静音分层)
+
+| 任务 | 时刻 | 内容 | GPU |
+|---|---|---|---|
+| `EarthwormDailySilent` | 每天 07:30 | 纯规则快车道清扫(`--provider none`) | 无 |
+| `EarthwormDeepWeekly` | 周二/四 07:45 | 内核深度轮(预算8) + verify + clear --apply + promote | 有(安静时段, 约15分钟) |
+| 桌宠 20:30 收工轮 | 每天 20:30 | 默认静默快车道; 右键可手动选"深度进食" | 可选 |
+
+物理清除三重门: 形式逻辑验证过的知识卡(verified)覆盖, 或保留件/原件完好(信息零损失可证明), 全程 append-only 清除台账(`D:\earthworm-cold\clearance.jsonl`)。
+
 ## 晋升进化（越吃越聪明）
 
 ```bash

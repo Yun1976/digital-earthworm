@@ -111,6 +111,30 @@ def cycle(cfg: Config) -> dict:
         digest.save_index(idx)
     print(f"      宝藏卡 +{len(cards)}")
 
+    # 形式逻辑验证(创始人 2026-10-26 令): 出的卡全部过 锚定+蕴含 审查
+    verified = 0
+    if cards and kernel is not None:
+        idx = digest.load_index()
+        for sha, entry in list(idx.items()):
+            if not isinstance(entry, dict) or entry.get("status") == "verified":
+                continue
+            try:
+                v = digest.verify_card(Path(entry["card"]), kernel)
+                entry["status"] = v["status"]
+                entry["verification"] = {"points_ok": v["points_ok"],
+                                         "points_total": v["points_total"],
+                                         "contradicted": v["contradicted"],
+                                         "nli": v["nli"], "ts": now.isoformat(timespec="seconds")}
+                if v["status"] == "verified":
+                    verified += 1
+                print(f"      验证: {Path(entry['card']).name} → {v['status']} "
+                      f"({v['points_ok']}/{v['points_total']}"
+                      + (f", 矛盾{v['contradicted']}" if v["contradicted"] else "") + ")")
+            except (OSError, KeyError):
+                continue
+        digest.save_index(idx)
+        print(f"      形式逻辑验证: verified {verified}/{len(cards)}")
+
     elapsed = round(time.time() - t0, 1)
     entries = []
     for d in decisions:

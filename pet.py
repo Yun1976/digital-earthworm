@@ -81,9 +81,12 @@ class Pet:
         self.cv.tag_bind("all", "<Button-3>", self._on_menu)
         self.cv.bind("<Button-3>", self._on_menu)
         self._menu = tk.Menu(self.root, tearoff=0)
-        self._menu.add_command(label="立即出洞·吃(进冷区, 可回滚)", command=self.dig)
+        self._menu.add_command(label="立即出洞·快车道清扫(静默, 无风扇)",
+                               command=lambda: self.dig(provider="none"))
+        self._menu.add_command(label="深度进食(本地内核·会有风扇声)",
+                               command=lambda: self.dig(provider="ollama"))
         self._menu.add_command(label="巡逻·只看不吃(dry-run)",
-                               command=lambda: self.dig(apply=False))
+                               command=lambda: self.dig(apply=False, provider="none"))
         self._menu.add_command(label="打开最新代谢报告", command=self.open_report)
         self._menu.add_separator()
         self._menu.add_command(label="退出", command=self.root.destroy)
@@ -148,16 +151,17 @@ class Pet:
         self.root.after(120, self._animate)
 
     # ---------- 代谢 ----------
-    def dig(self, apply: bool = True) -> None:
+    def dig(self, apply: bool = True, provider: str = "none") -> None:
         if self.state == "dig":
             return
         ensure_roots_file()
         self.last_run_day = datetime.now().strftime("%Y%m%d")
         self.q.put(("state", "dig"))
-        self._say("出洞觅食…")
+        self._say("出洞觅食…" if provider == "none" else "深度进食中(内核)…")
         cmd = [sys.executable, "-m", "earthworm", "dig",
                "--roots-file", str(ROOTS_FILE),
-               "--min-age-days", MIN_AGE_DAYS, "--llm-limit", LLM_LIMIT]
+               "--min-age-days", MIN_AGE_DAYS, "--llm-limit", LLM_LIMIT,
+               "--provider", provider]
         if apply:
             cmd.append("--apply")
 

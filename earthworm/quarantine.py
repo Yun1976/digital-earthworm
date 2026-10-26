@@ -97,6 +97,7 @@ def cold_move(decisions: list, cycle_id: str, cfg) -> list:
         entry = {
             "from": str(src), "to": str(dst),
             "sha256": d.cand.sha256 or _sha256_of(dst), "size": d.cand.size,
+            "category": d.cand.category, "signals": d.cand.signals,
         }
         moved.append(entry)
         seq += 1
@@ -108,6 +109,88 @@ def cold_move(decisions: list, cycle_id: str, cfg) -> list:
         (cdir / "MANIFEST.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return moved
+
+
+def clearance_ledger() -> Path:
+    return COLD_ROOT / "clearance.jsonl"
+
+
+def plan_clearance(idx: dict) -> tuple:
+    """清除资格审计(dry-run 数据)。三条依据, 全部是"信息零损失"可证明类:
+      a) verified_card  内容已被形式逻辑验证的知识卡覆盖(创始人 2026-10-26 令);
+      b) keeper_intact  版本链保留件/哈希重复原件完好无损地留在原位。
+    返回 (合格清单, 可回收字节)。"""
+    eligible: list = []
+    if not COLD_ROOT.is_dir():
+        return eligible, 0
+    for cdir in sorted(COLD_ROOT.iterdir()):
+        mf = cdir / "MANIFEST.json"
+        if not mf.is_file():
+            continue
+        try:
+            manifest = json.loads(mf.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for item in manifest.get("items", []):
+            if item.get("cleared"):
+                continue
+            basis = None
+            ent = idx.get(item.get("sha256", ""))
+            if isinstance(ent, dict) and ent.get("status") == "verified":
+                basis = f"verified_card:{ent.get('card', '')}"
+            else:
+                for s in item.get("signals") or []:
+                    if s.startswith(("superseded_by:", "duplicate_of:")):
+                        keeper = s.split(":", 1)[1]
+                        if Path(keeper).is_file():
+                            basis = f"keeper_intact:{keeper}"
+                        break
+            if basis:
+                eligible.append({"cycle": cdir.name, "item": item, "basis": basis})
+    return eligible, sum(e["item"].get("size", 0) for e in eligible)
+
+
+def clear_apply(eligible: list) -> list:
+    """物理清除 + append-only 清除台账(结构化证据)。"""
+    import datetime as dt
+    led = clearance_ledger()
+    done = []
+    for e in eligible:
+        item = e["item"]
+        src = Path(item["to"])
+        if not src.is_file():
+            alt = COLD_ROOT / e["cycle"] / src.name
+            src = alt if alt.is_file() else None
+        if src is None:
+            continue
+        try:
+            src.unlink()
+        except OSError:
+            continue
+        rec = {"ts": dt.datetime.now().isoformat(timespec="seconds"),
+               "cycle": e["cycle"], "from": item["from"],
+               "sha256": item.get("sha256", ""), "size": item.get("size", 0),
+               "basis": e["basis"]}
+        done.append(rec)
+        with open(led, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    # 回写受影响循环的 MANIFEST cleared 标记(历史保留, 只加标记)
+    cleared_keys = {(r["cycle"], r["from"]) for r in done}
+    for cyc in sorted({c for c, _ in cleared_keys}):
+        mf = COLD_ROOT / cyc / "MANIFEST.json"
+        try:
+            manifest = json.loads(mf.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        changed = False
+        for i in manifest.get("items", []):
+            if (cyc, i.get("from")) in cleared_keys and not i.get("cleared"):
+                i["cleared"] = True
+                changed = True
+        if changed:
+            mf.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
+                          encoding="utf-8")
+    return done
 
 
 def restore(cycle_id: str) -> list:

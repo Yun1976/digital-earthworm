@@ -115,6 +115,70 @@ def cmd_promote(a) -> int:
     return 0
 
 
+def cmd_verify(a) -> int:
+    from . import digest, providers
+    kernel, kdesc = providers.make_kernel(a.provider, Config(provider=a.provider,
+                                                             ollama_url=a.ollama_url))
+    if kernel is None:
+        print(f"内核不可达, 无法蕴含审查: {kdesc}")
+        return 2
+    idx = digest.load_index()
+    n = 0
+    for sha, entry in idx.items():
+        if isinstance(entry, str):
+            entry = {"card": entry, "status": "unverified"}
+            idx[sha] = entry
+        if entry.get("status") == "verified":
+            continue
+        try:
+            v = digest.verify_card(Path(entry["card"]), kernel)
+        except (OSError, KeyError) as e:
+            print(f"  跳过 {entry.get('card')}: {e}")
+            continue
+        entry["status"] = v["status"]
+        entry["verification"] = {"points_ok": v["points_ok"],
+                                 "points_total": v["points_total"],
+                                 "contradicted": v["contradicted"],
+                                 "nli": v["nli"]}
+        n += 1
+        print(f"  {Path(entry['card']).name} → {v['status']} "
+              f"({v['points_ok']}/{v['points_total']}"
+              + (f", 矛盾{v['contradicted']}" if v["contradicted"] else "") + ")")
+    digest.save_index(idx)
+    print(f"验证完成: 本轮审 {n} 张卡, verified "
+          f"{sum(1 for e in idx.values() if isinstance(e, dict) and e.get('status') == 'verified')}"
+          f"/{len(idx)}")
+    return 0
+
+
+def cmd_clear(a) -> int:
+    from . import digest, quarantine
+    idx = digest.load_index()
+    eligible, reclaim = quarantine.plan_clearance(idx)
+    print(f"可清除 {len(eligible)} 项 / {_human(reclaim)} ｜ 依据: verified_card(知识已验证覆盖) "
+          f"或 keeper_intact(保留件完好, 信息零损失)")
+    for e in eligible[:40]:
+        print(f"  [{e['basis'].split(':')[0]}] {e['item']['from'][:95]}")
+    if len(eligible) > 40:
+        print(f"  … 其余 {len(eligible) - 40} 项")
+    if a.apply:
+        done = quarantine.clear_apply(eligible)
+        print(f"已物理清除 {len(done)} 项 / {_human(sum(r['size'] for r in done))}，"
+              f"清除台账(append-only): {quarantine.clearance_ledger()}")
+    else:
+        print("(dry-run: 未删除任何文件; 加 --apply 执行物理清除)")
+    return 0
+
+
+def _human(n: int) -> str:
+    f = float(n)
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if f < 1024 or u == "TB":
+            return f"{f:.1f}{u}"
+        f /= 1024
+    return f"{f:.1f}TB"
+
+
 def main(argv=None) -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -152,6 +216,15 @@ def main(argv=None) -> None:
     pr.add_argument("--provider", default="ollama", choices=["ollama", "deepseek"])
     pr.add_argument("--ollama-url", default="http://192.168.1.2:11434")
     pr.set_defaults(func=cmd_promote)
+
+    vf = sub.add_parser("verify", help="知识卡形式逻辑验证(锚定+蕴含审查)")
+    vf.add_argument("--provider", default="ollama", choices=["ollama", "deepseek"])
+    vf.add_argument("--ollama-url", default="http://192.168.1.2:11434")
+    vf.set_defaults(func=cmd_verify)
+
+    cl = sub.add_parser("clear", help="已产verified知识/保留件完好的冷区数据物理清除(默认dry-run)")
+    cl.add_argument("--apply", action="store_true", help="真删(台账留证)")
+    cl.set_defaults(func=cmd_clear)
 
     args = p.parse_args(argv)
     sys.exit(args.func(args))
